@@ -1,0 +1,13 @@
+{
+  "name": "smtc_sx126x",
+  "apiVersion": "1.0.0",
+  "author": "Wayne Roberts",
+  "version": "0.9.9",
+  "description": "SX126x SPI parser",
+  "extensions": {
+    "smtc_sx126x": {
+      "type": "HighLevelAnalyzer",
+      "entryPoint": "HighLevelAnalyzer.Hla"
+    }
+  }
+}
