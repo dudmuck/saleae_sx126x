@@ -1,6 +1,6 @@
 # High Level Analyzer
 # For more information and documentation, please go to https://support.saleae.com/extensions/high-level-analyzer-extensions
-# for SX126x
+# for SX126x --- https://www.semtech.com/products/wireless-rf/lora-connect/sx1262
 
 from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, StringSetting, NumberSetting, ChoicesSetting
 import ctypes
@@ -26,6 +26,20 @@ class Status( ctypes.Union ):
      _anonymous_ = ("bit",)
      _fields_ = [
                  ("bit",    Status_bits ),
+                 ("asByte", c_uint8    )
+                ]
+
+class SleepConfig_bits( ctypes.LittleEndianStructure ):
+    _fields_ = [
+                ("rtc_wakeup", c_uint8, 1 ),  # 
+                ("RFU",        c_uint8, 1 ),  # 
+                ("warm_start", c_uint8, 1 ),  #  0 is cold start, 1 is retain config during sleep
+               ]
+
+class SleepConfig( ctypes.Union ):
+     _anonymous_ = ("bit",)
+     _fields_ = [
+                 ("bit",    SleepConfig_bits ),
                  ("asByte", c_uint8    )
                 ]
 
@@ -347,7 +361,16 @@ class Hla(HighLevelAnalyzer):
         return 'SetRx ' + _str
 
     def SetSleep(self):
-        return 'SetSleep'
+        cfg = SleepConfig()
+        cfg.asByte = self.ba_mosi[1]
+        my_str = 'SetSleep '
+        if cfg.rtc_wakeup == 1:
+            my_str = 'RTC wakeup '
+        if cfg.warm_start == 1:
+            my_str = my_str + 'warm-start' # device config retention
+        else:
+            my_str = my_str + 'cold-start'
+        return my_str
 
     def StopTimerOnPreamble(self):
         en = self.ba_mosi[1]
