@@ -6,6 +6,7 @@ from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, StringSetting, Nu
 import ctypes
 from enum import Enum
 c_uint8 = ctypes.c_uint8
+c_uint16 = ctypes.c_uint16
 
 
 class PacketType(Enum):
@@ -13,6 +14,49 @@ class PacketType(Enum):
     LORA = 1,
     FSK = 2,
     FHSS = 3
+
+class IrqFlags_bits( ctypes.LittleEndianStructure ):
+    _fields_ = [
+                ("TxDone",           c_uint16, 1 ),  # 0
+                ("RxDone",           c_uint16, 1 ),  # 1
+                ("PreambleDetected", c_uint16, 1 ),  # 2
+                ("SyncWordValid",    c_uint16, 1 ),  # 3
+                ("HeaderValid",      c_uint16, 1 ),  # 4
+                ("HeaderErr",        c_uint16, 1 ),  # 5
+                ("CrcErr",           c_uint16, 1 ),  # 6
+                ("CadDone",          c_uint16, 1 ),  # 7
+                ("CadDetected",      c_uint16, 1 ),  # 8
+                ("Timeout",          c_uint16, 1 ),  # 9
+                ("RFU",              c_uint16, 4 ),  # 10,11,12,13
+                ("LrFhssHop",        c_uint16, 1 ),  # 14
+                ("RFU15",            c_uint16, 1 ),  # 15
+               ]
+
+class IrqFlags( ctypes.Union ):
+     _anonymous_ = ("bit",)
+     _fields_ = [
+                 ("bit",    IrqFlags_bits ),
+                 ("asWord", c_uint16 )
+                ]
+
+class FskRxStatus_bits( ctypes.LittleEndianStructure ):
+    _fields_ = [
+                ("sent",         c_uint8, 1 ),  # 0
+                ("recevied",     c_uint8, 1 ),  # 1
+                ("abort_err",    c_uint8, 1 ),  # 2
+                ("length_err",   c_uint8, 1 ),  # 3
+                ("crc_err",      c_uint8, 1 ),  # 4
+                ("adrs_err",     c_uint8, 1 ),  # 5
+                ("sync_err",     c_uint8, 1 ),  # 6
+                ("preamble_err", c_uint8, 1 ),  # 7
+               ]
+
+class FskRxStatus( ctypes.Union ):
+     _anonymous_ = ("bit",)
+     _fields_ = [
+                 ("bit",    FskRxStatus_bits ),
+                 ("asByte", c_uint8    )
+                ]
 
 class Status_bits( ctypes.LittleEndianStructure ):
     _fields_ = [
@@ -74,8 +118,11 @@ class Hla(HighLevelAnalyzer):
 
     regDict = {
         0x6c0: 'SyncWord',
+        0x6bb: 'PayloadLength', # RxTxPldLen
         0x736: 'IQInvert',  # fix for inverted IQ at bit 2
         0x740: 'LoRaSync', # LoRa Config22
+        0x802: 'txAddrPtr',
+        0x803: 'rxAddrPtr',
         0x889: 'SdCfg0',
         0x8ac: 'AgcSensiAdj',
         0x8e7: 'paImax',
@@ -185,7 +232,7 @@ class Hla(HighLevelAnalyzer):
     def SetPacketParams(self):
         if self.pt == PacketType.FSK:
             preambleLength = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
-            my_str = 'preamble TX ' + str(preambleLength)
+            my_str = 'tx_preamble ' + str(preambleLength)
             detect = self.ba_mosi[3]
             if detect == 0:
                 n_bits = 'OFF'
@@ -305,13 +352,79 @@ class Hla(HighLevelAnalyzer):
             my_str = str(self.ba_mosi[1])
         return 'SetPacketType ' + my_str
 
+    def irqFlagsToString(self, word):
+        flags = IrqFlags()
+        flags.asWord = word
+        my_str = ''
+        if flags.TxDone == 1:
+            my_str = my_str + 'TxDone '
+        if flags.RxDone == 1:
+            my_str = my_str + 'RxDone '
+        if flags.PreambleDetected == 1:
+            my_str = my_str + 'PreambleDetected '
+        if flags.SyncWordValid == 1:
+            my_str = my_str + 'SyncWordValid '
+        if flags.HeaderValid == 1:
+            my_str = my_str + 'HeaderValid '
+        if flags.HeaderErr == 1:
+            my_str = my_str + 'HeaderErr '
+        if flags.CrcErr == 1:
+            my_str = my_str + 'CrcErr '
+        if flags.CadDone == 1:
+            my_str = my_str + 'CadDone '
+        if flags.CadDetected == 1:
+            my_str = my_str + 'CadDetected '
+        if flags.Timeout == 1:
+            my_str = my_str + 'Timeout '
+        if flags.RFU != 0:
+            my_str = my_str + 'RFU '
+        if flags.LrFhssHop == 1:
+            my_str = my_str + 'LrFhssHop '
+        if flags.RFU15 == 1:
+            my_str = my_str + 'RFU15 '
+        return my_str
+
     def GetIrqStatus(self):
-        irqFlags = int.from_bytes(bytearray(self.ba_miso[2:4]), 'big')
-        return 'GetIrqStatus ' + hex(irqFlags)
+        str = self.irqFlagsToString(int.from_bytes(bytearray(self.ba_miso[2:4]), 'big'))
+        return 'GetIrqStatus ' + str
+
+    def GetRxBufferStatus(self):
+        PayloadLengthRx = self.ba_miso[2]
+        RxStartBufferPointer = self.ba_miso[3]
+        return 'GetRxBufferStatus ' + str(PayloadLengthRx) + 'bytes at ' + str(RxStartBufferPointer)
+
+    def GetPacketStatus(self):
+        if self.pt == PacketType.FSK:
+            frs = FskRxStatus()
+            frs.asByte = self.ba_miso[2]
+            RssiSync = self.ba_miso[3]
+            RssiAvg  = self.ba_miso[4]
+            my_str = 'rssi:' + str(RssiSync/-2) + 'dBm, ' + str(RssiAvg/-2) + 'dBm '
+            if frs.sent == 1:
+                my_str = my_str + 'pkt_sent '
+            if frs.recevied == 1:
+                my_str = my_str + 'pkt_recevied '
+            if frs.abort_err == 1:
+                my_str = my_str + 'abort_err '
+            if frs.length_err == 1:
+                my_str = my_str + 'length_err '
+            if frs.crc_err == 1:
+                my_str = my_str + 'crc_err '
+            if frs.adrs_err == 1:
+                my_str = my_str + 'adrs_err '
+            if frs.sync_err == 1:
+                my_str = my_str + 'sync_err '
+            if frs.preamble_err == 1:
+                my_str = my_str + 'preamble_err '
+        elif self.pt == PacketType.LORA:
+            my_str = 'TODO LORA'
+        else:
+            my_str = 'TODO pktType ' + str(self.pt)
+        return 'GetPacketStatus ' + my_str
 
     def ClearIrqStatus(self):
-        ClearIrqParam = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
-        return 'ClearIrqStatus ' + hex(ClearIrqParam) #+ ' ' + fooStr
+        str = self.irqFlagsToString(int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big'))
+        return 'ClearIrqStatus ' + str
 
     def ReadRegister(self):
         addr = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
@@ -323,6 +436,9 @@ class Hla(HighLevelAnalyzer):
             regStr = hex(addr) + ' '  + str(error)
         return 'ReadRegister ' + regStr + ' --> ' + data_str
 
+    def ReadBuffer(self):
+        return 'ReadBuffer ' + str(len(self.ba_mosi)-1) + 'bytes'
+
     def WriteRegister(self):
         addr = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
         array_alpha = self.ba_mosi[3:]
@@ -332,6 +448,9 @@ class Hla(HighLevelAnalyzer):
         except Exception as error:
             regStr = hex(addr) + ' '  + str(error)
         return 'WriteRegister ' + regStr + " <-- " + data_str
+
+    def WriteBuffer(self):
+        return 'WriteBuffer offset=' + str(self.ba_mosi[1]) + ', ' + str(len(self.ba_mosi)-2) + 'bytes'
 
     def SetDioIrqParams(self):
         irqMask = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
@@ -359,6 +478,10 @@ class Hla(HighLevelAnalyzer):
             us = (timeout * 1000) / 64
             _str = str(us) + 'μs'
         return 'SetRx ' + _str
+
+    def SetTx(self):
+        timeout = int.from_bytes(bytearray(self.ba_mosi[1:4]), 'big')
+        return 'SetTx ' + str(timeout/64)+ 'ms'
 
     def SetSleep(self):
         cfg = SleepConfig()
@@ -477,14 +600,19 @@ class Hla(HighLevelAnalyzer):
     def SetLoRaSymbNumTimeout(self):
         return 'SetLoRaSymbNumTimeout ' + str(self.ba_mosi[1])
 
-    myDict = {
+    cmdDict = {
         0x02: ClearIrqStatus,
         0x08: SetDioIrqParams,
         0x0d: WriteRegister,
-        0x1d: ReadRegister,
+        0x0e: WriteBuffer,
         0x12: GetIrqStatus,
+        0x13: GetRxBufferStatus,
+        0x14: GetPacketStatus,
+        0x1d: ReadRegister,
+        0x1e: ReadBuffer,
         0x80: SetStandby,
         0x82: SetRx,
+        0x83: SetTx,
         0x84: SetSleep,
         0x86: SetRfFrequency,
         0x88: SetCadParams,
@@ -530,7 +658,7 @@ class Hla(HighLevelAnalyzer):
             self.idx = -1
             if len(self.ba_mosi) > 0:
                 try:
-                    my_str = self.myDict[self.ba_mosi[0]](self)
+                    my_str = self.cmdDict[self.ba_mosi[0]](self)
                 except Exception as error:
                     if self.ba_mosi[0] == 0:
                         my_str = str(frame.end_time - self.nss_fall_time)
