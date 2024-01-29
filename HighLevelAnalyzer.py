@@ -117,14 +117,20 @@ class Hla(HighLevelAnalyzer):
     }
 
     regDict = {
+        # 0x200 to 0x3ff is data ram
+        0x580: "dio_out_en",
+        0x581: "dio_out_val",
+        0x587: "dio_alt_cfg",
         0x6c0: 'SyncWord',
         0x6bb: 'PayloadLength', # RxTxPldLen
         0x736: 'IQInvert',  # fix for inverted IQ at bit 2
-        0x740: 'LoRaSync', # LoRa Config22
+        0x740: 'LoRaSyncMSB', # LoRa Config22
+        0x741: 'LoRaSyncLSB', # LoRa Config23
         0x802: 'txAddrPtr',
         0x803: 'rxAddrPtr',
         0x889: 'SdCfg0',
         0x8ac: 'AgcSensiAdj',
+        0x8d8: 'TxClampConfig',
         0x8e7: 'paImax',
         0x911: 'XTAtrim',
         0x912: 'XTBtrim',
@@ -352,6 +358,21 @@ class Hla(HighLevelAnalyzer):
             my_str = str(self.ba_mosi[1])
         return 'SetPacketType ' + my_str
 
+    def GetPacketType(self):
+        if self.ba_miso[2] == 0:
+            self.pt = PacketType.FSK
+            my_str = 'FSK'
+        elif self.ba_miso[2] == 1:
+            self.pt = PacketType.LORA
+            my_str = 'LoRa'
+        elif self.ba_miso[2] == 3:
+            self.pt = PacketType.FHSS
+            my_str = 'FHSS'
+        else:
+            self.pt = PacketType.NONE
+            my_str = str(self.ba_mosi[1])
+        return 'GetPacketType ' + my_str
+
     def irqFlagsToString(self, word):
         flags = IrqFlags()
         flags.asWord = word
@@ -383,6 +404,7 @@ class Hla(HighLevelAnalyzer):
         if flags.RFU15 == 1:
             my_str = my_str + 'RFU15 '
         return my_str
+
 
     def GetIrqStatus(self):
         str = self.irqFlagsToString(int.from_bytes(bytearray(self.ba_miso[2:4]), 'big'))
@@ -431,9 +453,9 @@ class Hla(HighLevelAnalyzer):
         array_alpha = self.ba_miso[4:]
         data_str = ''.join('{:02x}'.format(x) for x in array_alpha)
         try:
-            regStr = self.regDict[addr]
+            regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr]
         except Exception as error:
-            regStr = hex(addr) + ' '  + str(error)
+            regStr = hex(addr) + ' ' + str(error)
         return 'ReadRegister ' + regStr + ' --> ' + data_str
 
     def ReadBuffer(self):
@@ -444,9 +466,9 @@ class Hla(HighLevelAnalyzer):
         array_alpha = self.ba_mosi[3:]
         data_str = ''.join('{:02x}'.format(x) for x in array_alpha)
         try:
-            regStr = self.regDict[addr]
+            regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr]
         except Exception as error:
-            regStr = hex(addr) + ' '  + str(error)
+            regStr = hex(addr) + ' ' + str(error)
         return 'WriteRegister ' + regStr + " <-- " + data_str
 
     def WriteBuffer(self):
@@ -600,11 +622,15 @@ class Hla(HighLevelAnalyzer):
     def SetLoRaSymbNumTimeout(self):
         return 'SetLoRaSymbNumTimeout ' + str(self.ba_mosi[1])
 
+    def GetStatus(self):
+        return 'GetStatus'
+
     cmdDict = {
         0x02: ClearIrqStatus,
         0x08: SetDioIrqParams,
         0x0d: WriteRegister,
         0x0e: WriteBuffer,
+        0x11: GetPacketType,
         0x12: GetIrqStatus,
         0x13: GetRxBufferStatus,
         0x14: GetPacketStatus,
@@ -627,6 +653,7 @@ class Hla(HighLevelAnalyzer):
         0x9d: SetDIO2AsRfSwitchCtrl,
         0x9f: StopTimerOnPreamble,
         0xa0: SetLoRaSymbNumTimeout,
+        0xc0: GetStatus,
     }
 
     result_types = {
