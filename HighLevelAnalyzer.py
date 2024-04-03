@@ -10,7 +10,7 @@ c_uint16 = ctypes.c_uint16
 
 
 class PacketType(Enum):
-    NONE = 0 
+    NONE = 0
     LORA = 1,
     FSK = 2,
     FHSS = 3
@@ -60,10 +60,10 @@ class FskRxStatus( ctypes.Union ):
 
 class Status_bits( ctypes.LittleEndianStructure ):
     _fields_ = [
-                ("res0",      c_uint8, 1 ),  # 
-                ("cmdStatus", c_uint8, 3 ),  # 
-                ("chipMode",  c_uint8, 3 ),  # 
-                ("res7",      c_uint8, 1 ),  # 
+                ("res0",      c_uint8, 1 ),  #
+                ("cmdStatus", c_uint8, 3 ),  #
+                ("chipMode",  c_uint8, 3 ),  #
+                ("res7",      c_uint8, 1 ),  #
                ]
 
 class Status( ctypes.Union ):
@@ -75,8 +75,8 @@ class Status( ctypes.Union ):
 
 class SleepConfig_bits( ctypes.LittleEndianStructure ):
     _fields_ = [
-                ("rtc_wakeup", c_uint8, 1 ),  # 
-                ("RFU",        c_uint8, 1 ),  # 
+                ("rtc_wakeup", c_uint8, 1 ),  #
+                ("RFU",        c_uint8, 1 ),  #
                 ("warm_start", c_uint8, 1 ),  #  0 is cold start, 1 is retain config during sleep
                ]
 
@@ -459,7 +459,9 @@ class Hla(HighLevelAnalyzer):
         return 'ReadRegister ' + regStr + ' --> ' + data_str
 
     def ReadBuffer(self):
-        return 'ReadBuffer ' + str(len(self.ba_mosi)-1) + 'bytes'
+        # MOSI: opCode(0x1E), OFFSET, NOP   , NOP        , NOP          , NOP          , ... NOP
+        # MISO: RFU         , STATUS, STATUS, BUF[offset], BUF[offset+1], BUF[offset+2], ... BUF[offset+n]
+        return 'ReadBuffer ' + str(len(self.ba_mosi)-3) + 'bytes'
 
     def WriteRegister(self):
         addr = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
@@ -479,7 +481,7 @@ class Hla(HighLevelAnalyzer):
         dio1_mask = int.from_bytes(bytearray(self.ba_mosi[3:5]), 'big')
         dio2_mask = int.from_bytes(bytearray(self.ba_mosi[5:7]), 'big')
         dio3_mask = int.from_bytes(bytearray(self.ba_mosi[7:9]), 'big')
-        return 'SetDioIrqParams ' + hex(irqMask) + ' DIO1 ' + hex(dio1_mask) + ' DIO2 ' + hex(dio2_mask) + ' DIO3 ' + hex(dio3_mask) 
+        return 'SetDioIrqParams ' + hex(irqMask) + ' DIO1 ' + hex(dio1_mask) + ' DIO2 ' + hex(dio2_mask) + ' DIO3 ' + hex(dio3_mask)
 
     def SetStandby(self):
         if self.ba_mosi[1] == 0:
@@ -586,6 +588,78 @@ class Hla(HighLevelAnalyzer):
             str2 = hex(freq2)
         return 'CalImg ' + str(str1) + ' ' + str(str2)
 
+    def Calibrate(self):
+        calibParam = self.ba_mosi[1]
+        outStr = ""
+        if calibParam & (1 << 0):
+            outStr += "RC64k "
+        if calibParam & (1 << 1):
+            outStr += "RC13M "
+        if calibParam & (1 << 2):
+            outStr += "ADC_pulse "
+        if calibParam & (1 << 3):
+            outStr += "ADC_bulk_N "
+        if calibParam & (1 << 4):
+            outStr += "ADC_bulk_P "
+        if calibParam & (1 << 5):
+            outStr += "IMAGE "
+        return "Calibrate " + outStr[:-1]
+
+    def SetRxTxFallbackMode(self):
+        fallbackMode = {
+            0x40: "FS",
+            0x30: "STDBY_XOSC",
+            0x20: "STDBY_RC",
+        }
+        return 'SetRxTxFallbackMode ' + fallbackMode[self.ba_mosi[1]]
+
+    def ResetStats(self):
+        return "ResetStats"
+
+    def ClearDeviceErrors(self):
+        return "ClearDeviceErrors status=" + hex(self.ba_miso[1]) + hex(self.ba_miso[2])
+
+    def GetStats(self):
+        return "GetStats status=" + hex(self.ba_miso[1]) + " numPktReceived=" + str(self.ba_miso[2]) + " numPktCrcErrors=" \
+            + str(self.ba_miso[3])
+
+    def GetRssiInst(self):
+        return "GetRssiInst status=" + hex(self.ba_miso[1]) + " rssi=" + str(-1 * self.ba_miso[2] / 2) + "dBM"
+
+    def GetDeviceErrors(self):
+        return "GetDeviceErrors status=" + hex(self.ba_miso[1]) + "OpError=" + hex(self.ba_miso[2] + (self.ba_miso[3] << 8))
+
+    def SetRxDutyCycle(self):
+        return "SetRxDutyCycle rxPeriod=" + str((self.ba_mosi[1] << 16) + (self.ba_mosi[2] << 8) + self.ba_mosi[3]) + "sleepPeriod=" \
+            + str((self.ba_mosi[4] << 16) + (self.ba_mosi[5] << 8) + self.ba_mosi[6])
+
+    def SetDIO3AsTcxoCtrl(self):
+        tcxoV = {
+            0x00: "1.6V",
+            0x01: "1.7V",
+            0x02: "1.8V",
+            0x03: "2.2V",
+            0x04: "2.4V",
+            0x05: "2.7V",
+            0x06: "3.0V",
+            0x07: "3.3V",
+        }
+        return "SetDIO3AsTcxoCtrl tcxoVoltage=" + tcxoV[self.ba_mosi[1]] + "V delay=" \
+            + str((self.ba_mosi[2] << 16) + (self.ba_mosi[3] << 8) + self.ba_mosi[4])
+
+    def SetFs(self):
+        return "SetFs"
+
+    def SetCad(self):
+        return "SetCad"
+
+    def SetTxContinuousWave(self):
+        return "SetTxContinuousWave"
+
+    def SetTxInfinitePreamble(self):
+        return "SetTxInfinitePreamble"
+
+
     def SetPaConfig(self):
         paDuty = self.ba_mosi[1]
         hpMax = self.ba_mosi[2]
@@ -626,14 +700,19 @@ class Hla(HighLevelAnalyzer):
         return 'GetStatus'
 
     cmdDict = {
+        0x00: ResetStats,
         0x02: ClearIrqStatus,
+        0x07: ClearDeviceErrors,
         0x08: SetDioIrqParams,
         0x0d: WriteRegister,
         0x0e: WriteBuffer,
+        0x10: GetStats,
         0x11: GetPacketType,
         0x12: GetIrqStatus,
         0x13: GetRxBufferStatus,
         0x14: GetPacketStatus,
+        0x15: GetRssiInst,
+        0x17: GetDeviceErrors,
         0x1d: ReadRegister,
         0x1e: ReadBuffer,
         0x80: SetStandby,
@@ -642,18 +721,26 @@ class Hla(HighLevelAnalyzer):
         0x84: SetSleep,
         0x86: SetRfFrequency,
         0x88: SetCadParams,
+        0x89: Calibrate,
         0x8a: SetPacketType,
         0x8b: SetModulationParams,
         0x8c: SetPacketParams,
         0x8e: SetTxParams,
         0x8f: SetBufferBaseAddress,
+        0x93: SetRxTxFallbackMode,
+        0x94: SetRxDutyCycle,
         0x95: SetPaConfig,
-        0x98: CalImg,
         0x96: SetRegulatorMode,
+        0x97: SetDIO3AsTcxoCtrl,
+        0x98: CalImg,
         0x9d: SetDIO2AsRfSwitchCtrl,
         0x9f: StopTimerOnPreamble,
         0xa0: SetLoRaSymbNumTimeout,
         0xc0: GetStatus,
+        0xc1: SetFs,
+        0xc5: SetCad,
+        0xd1: SetTxContinuousWave,
+        0xD2: SetTxInfinitePreamble,
     }
 
     result_types = {
