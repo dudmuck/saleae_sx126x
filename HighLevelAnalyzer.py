@@ -459,7 +459,9 @@ class Hla(HighLevelAnalyzer):
         return 'ReadRegister ' + regStr + ' --> ' + data_str
 
     def ReadBuffer(self):
-        return 'ReadBuffer ' + str(len(self.ba_mosi)-1) + 'bytes'
+        # MOSI: opCode(0x1E), OFFSET, NOP   , NOP        , NOP          , NOP          , ... NOP
+        # MISO: RFU         , STATUS, STATUS, BUF[offset], BUF[offset+1], BUF[offset+2], ... BUF[offset+n]
+        return 'ReadBuffer ' + str(len(self.ba_mosi)-3) + 'bytes'
 
     def WriteRegister(self):
         addr = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
