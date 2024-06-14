@@ -200,11 +200,12 @@ class Hla(HighLevelAnalyzer):
                 my_str = my_str + hex(pulseShape)
             try:
                 bw = self.fsk_bwDict[self.ba_mosi[5]]
-                my_str = my_str + ' ' + str(bw) + 'Hz '
+                my_str = my_str + ' bw=' + str(bw) + 'Hz '
             except Exception as error:
                 my_str = my_str + ' BW(' + hex(self.ba_mosi[5]) + ' ' + str(error) + ') '
             fdev = int.from_bytes(bytearray(self.ba_mosi[6:9]), 'big')
-            my_str = my_str + ' ' + str(fdev) # + hex(fdev)
+            hz = fdev*32000000/(1<<25)
+            my_str = my_str + ' fdev=' + str(round(hz)) + "Hz"
         elif self.pt == PacketType.LORA:
             sf = self.ba_mosi[1]
             my_str = 'SF' + str(sf)
@@ -770,7 +771,9 @@ class Hla(HighLevelAnalyzer):
             self.idx = 0
         elif frame.type == 'disable':   # rising edge of nSS
             self.idx = -1
-            if len(self.ba_mosi) > 0:
+            if len(self.ba_mosi) > 1:
+                if self.ba_mosi[0] == 0x00:
+                    print("0x00 cmd len " + str(len(self.ba_mosi)))
                 try:
                     my_str = self.cmdDict[self.ba_mosi[0]](self)
                 except Exception as error:
@@ -781,11 +784,9 @@ class Hla(HighLevelAnalyzer):
 
                 if len(self.ba_mosi) > 1:
                     my_str = my_str + ' ' + self.parseStatus(self.ba_miso[1])
-                print('--> ', my_str)
                 return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':my_str})
             else:
-                print('--> zeroLength <--')
-                return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':'?? wake ??'})
+                return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':'wake'})
         elif frame.type == 'error':
             print('error');
 
