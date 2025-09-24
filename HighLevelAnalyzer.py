@@ -4,6 +4,7 @@
 
 from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, StringSetting, NumberSetting, ChoicesSetting
 import ctypes
+import types
 from enum import Enum
 c_uint8 = ctypes.c_uint8
 c_uint16 = ctypes.c_uint16
@@ -116,6 +117,122 @@ class Hla(HighLevelAnalyzer):
         0x09: 476000,
     }
 
+    def LoRaConfig0(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        bws = { 5:500, 4:250, 3:125, 2:62, 1:31, 0:15 }
+        bw = val >> 4
+        sf = val & 0x0f
+        return 'LoRaConfig0 '+bws.get(bw, '?'+hex(bw)+'?')+'KHz sf'+str(sf)
+
+    def LoRaConfig1(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        if val & 0x80:
+            _str = 'implicit '
+        else:
+            _str = 'explicit '
+        if val & 0x40:
+            _str = _str + 'rx_invert_iq '
+        if val & 0x20:
+            _str = _str + 'tx-cont '
+        else:
+            _str = _str + 'tx-single '
+        ppm_offset = (val >> 3) & 0x03
+        _str = _str + 'ppm_offset:'+str(ppm_offset)+' '
+        txcr = val & 0x07
+        _str = _str + 'txcr:'+str(txcr)
+        return 'LoRaConfig1 '+_str
+
+    def LoRaStatus0(self, is_write):
+        if is_write:
+            _str = 'READ-ONLY'
+        else:
+            val = self.ba_miso[4]
+            _str = ' ppm_offset:'+str(val>>7) # mux sel
+            _str = _str + ' CR'+str((val >> 4) & 0x7)
+        return 'LoRaStatus0 rx_header '+_str
+
+    def LoRaStatus1(self, is_write):
+        if is_write:
+            _str = 'READ-ONLY'
+        else: # TODO read of more than 1byte to get est_freq_error
+            val = self.ba_miso[4]
+            _str = ''
+            if val & 0x80:
+                _str = _str + 'range_result '
+            rf_en_request = (val >> 5) & 3
+            _str = _str + 'rf_en_request='+str(rf_en_request)+' '
+            if val & 0x10:
+                _str = _str + 'header_crc16_en '
+            self.est_freq_error = (val & 0x0f) << 16
+        return 'LoRaStatus1 '+_str
+
+    def LoRaStatus2(self, is_write):
+        if is_write:
+            _str = 'READ-ONLY'
+        else:
+            val = self.ba_miso[4]
+            _str = ''
+            if val & 2:
+                _str = _str + 'max_bin_pos_changed '
+            if val & 1:
+                _str = _str + 'last_frame_side_detected '
+        return 'LoRaStatus2 '+_str
+
+    def SideDetCtrl0(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        if val & 0x80:
+            _str = 'enabled'
+        else:
+            _str = 'OFF'
+        _str = _str + ' sf' + str((val >> 3) & 0x0f)
+        if val & 0x04:
+            _str = _str + ' fine_synch_en'
+        _str = _str + ' ppm_offset:'+str(val & 0x03)
+        return 'SideDetCtrl0 ' + _str
+
+    def SideDetCtrl1(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        _str = 'ppm_offset_hc:'+str(val >> 6)+' '
+        if val & 0x20:
+            _str = _str + 'chirp_invert '
+        trig_same_peaks_nb = (val >> 2) & 0x07
+        _str = _str + 'trig_same_peaks_nb:'+str(trig_same_peaks_nb)+' '
+        self.side_det_f_to_time_inv = (val & 3) << 8
+        return 'SideDetCtrl1 '+_str
+
+    def SideDetCtrl2(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        return 'SideDetCtrl2 f_to_time_inv='+str(self.side_det_f_to_time_inv | val)
+
+    def SideDetCtrl3(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        return 'SideDetCtrl3 acc_peak_to_noise='+str(val)
+
+    def TxClampConfig(self, is_write):
+        if is_write:
+            val = self.ba_mosi[3]
+        else:
+            val = self.ba_miso[4]
+        return 'TxClampConfig ('+hex(val)+')'
+
     regDict = {
         # 0x200 to 0x3ff is data ram
         0x580: "dio_out_en",
@@ -123,14 +240,25 @@ class Hla(HighLevelAnalyzer):
         0x587: "dio_alt_cfg",
         0x6c0: 'SyncWord',
         0x6bb: 'PayloadLength', # RxTxPldLen
-        0x736: 'IQInvert',  # fix for inverted IQ at bit 2
+        0x703: LoRaConfig0,
+        0x704: LoRaConfig1,
+        0x736: 'FreqToTimeInvert0',  # fix for inverted IQ at bit 2
         0x740: 'LoRaSyncMSB', # LoRa Config22
         0x741: 'LoRaSyncLSB', # LoRa Config23
+        0x749: LoRaStatus0,
+        0x76b: LoRaStatus1,
+        0x796: LoRaStatus2,
+        0x797: SideDetCtrl0,
+        0x7c8: 'SideDetectFrameSynchPeak1Pos',
+        0x7c9: 'SideDetectFrameSynchPeak2Pos',
+        0x798: SideDetCtrl1,
+        0x799: SideDetCtrl2,
+        0x79a: SideDetCtrl3,
         0x802: 'txAddrPtr',
         0x803: 'rxAddrPtr',
         0x889: 'SdCfg0',
         0x8ac: 'AgcSensiAdj',
-        0x8d8: 'TxClampConfig',
+        0x8d8: TxClampConfig,
         0x8e7: 'paImax',
         0x911: 'XTAtrim',
         0x912: 'XTBtrim',
@@ -237,6 +365,14 @@ class Hla(HighLevelAnalyzer):
         return 'SetModulationParams ' + my_str
 
     def SetPacketParams(self):
+        if self.pt == PacketType.NONE:
+            # setPacketType was not captured earlier, assume from mosi length
+            _len = len(self.ba_mosi)
+            if _len == 7:
+                self.pt = PacketType.LORA
+            elif _len == 10:
+                self.pt = PacketType.FSK
+
         if self.pt == PacketType.FSK:
             preambleLength = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
             my_str = 'tx_preamble ' + str(preambleLength)
@@ -322,7 +458,7 @@ class Hla(HighLevelAnalyzer):
                 iqStr = hex(iqInv)
             my_str = my_str + ' IQ ' + iqStr
         else:
-            my_str = 'TODO pktType ' + str(self.pt)
+            my_str = 'TODO pktType ' + str(self.pt) + ', mosi length ' + str(len(self.ba_mosi))
 
         return 'SetPacketParams ' + my_str
 
@@ -440,7 +576,10 @@ class Hla(HighLevelAnalyzer):
             if frs.preamble_err == 1:
                 my_str = my_str + 'preamble_err '
         elif self.pt == PacketType.LORA:
-            my_str = 'TODO LORA'
+            RssiPkt  = self.ba_miso[2]
+            SnrPkt  = self.ba_miso[3]
+            SignalRssiPkt  = self.ba_miso[4]
+            my_str = 'rssi:' + str(RssiPkt/-2) + 'dBm SNR='+str(SnrPkt/4)+'dB signal='+str(SignalRssiPkt/-2) + 'dBm '
         else:
             my_str = 'TODO pktType ' + str(self.pt)
         return 'GetPacketStatus ' + my_str
@@ -454,9 +593,13 @@ class Hla(HighLevelAnalyzer):
         array_alpha = self.ba_miso[4:]
         data_str = ''.join('{:02x}'.format(x) for x in array_alpha)
         try:
-            regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr]
+            obj = self.regDict[addr]
+            if isinstance(obj, types.FunctionType):
+                regStr = 'at ' + hex(addr) + ' ' + obj(self, False)
+            else:
+                regStr = 'at ' + hex(addr) + ' ' + obj
         except Exception as error:
-            regStr = hex(addr) + ' ' + str(error)
+            regStr = hex(addr) + ' regDict:' + str(error)
         return 'ReadRegister ' + regStr + ' --> ' + data_str
 
     def ReadBuffer(self):
@@ -469,9 +612,14 @@ class Hla(HighLevelAnalyzer):
         array_alpha = self.ba_mosi[3:]
         data_str = ''.join('{:02x}'.format(x) for x in array_alpha)
         try:
-            regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr]
+            if isinstance(self.regDict[addr], types.FunctionType):
+                regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr](self, True)
+            else:
+                regStr = 'at ' + hex(addr) + ' ' + self.regDict[addr]
         except Exception as error:
-            regStr = hex(addr) + ' ' + str(error)
+            regStr = hex(addr) + ' regDict:' + str(error)
+        if addr != 0x911 and addr != 0x889 and addr != 0x6c0 and addr != 0x8e7 and addr != 0x6bb:
+            print('writereg ', hex(addr), ', ', data_str)
         return 'WriteRegister ' + regStr + " <-- " + data_str
 
     def WriteBuffer(self):
@@ -754,6 +902,7 @@ class Hla(HighLevelAnalyzer):
     def __init__(self):
         self.idx = 0
         self.pt = PacketType.NONE
+        self.side_det_f_to_time_inv = 0
 
     def decode(self, frame: AnalyzerFrame):
         if frame.type == 'result':
