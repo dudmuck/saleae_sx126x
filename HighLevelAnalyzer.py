@@ -14,7 +14,8 @@ class PacketType(Enum):
     NONE = 0
     LORA = 1,
     FSK = 2,
-    FHSS = 3
+    FHSS = 3,
+    BPSK = 4
 
 class IrqFlags_bits( ctypes.LittleEndianStructure ):
     _fields_ = [
@@ -114,7 +115,7 @@ class Hla(HighLevelAnalyzer):
         0x0a: 234300,
         0x19: 312000,
         0x11: 373600,
-        0x09: 476000,
+        0x09: 467000,
     }
 
     def LoRaConfig0(self, is_write):
@@ -235,18 +236,27 @@ class Hla(HighLevelAnalyzer):
 
     regDict = {
         # 0x200 to 0x3ff is data ram
-        0x580: "dio_out_en",
+        0x29f: 'RetentionListBaseAddress',
+        0x580: "dio_out_en", # OUT_DIS_REG
         0x581: "dio_out_val",
-        0x587: "dio_alt_cfg",
-        0x6c0: 'SyncWord',
+        0x583: "dio_in_en", # IN_EN_REG
+        0x587: "dio_alt_cfg", # BITBANG_B_REG
+        0x680: "BitbangA",
+        0x6b8: 'WhiteningSeedBase',
         0x6bb: 'PayloadLength', # RxTxPldLen
+        0x6bc: 'CrcSeedBase',
+        0x6be: 'CrcPolyBase',
+        0x6c0: 'SyncWord',
+        0x6cd: 'GfskNodeAddress',
+        0x6ce: 'GfskBroadcastAddress',
         0x703: LoRaConfig0,
         0x704: LoRaConfig1,
-        0x736: 'FreqToTimeInvert0',  # fix for inverted IQ at bit 2
+        0x706: 'LoRaSynchTimeout',
+        0x736: 'IQ_Polarity',  # fix for inverted IQ at bit 2
         0x740: 'LoRaSyncMSB', # LoRa Config22
         0x741: 'LoRaSyncLSB', # LoRa Config23
-        0x749: LoRaStatus0,
-        0x76b: LoRaStatus1,
+        0x749: LoRaStatus0, # LR_HEADER_CR
+        0x76b: LoRaStatus1, # LR_HEADER_CRC
         0x796: LoRaStatus2,
         0x797: SideDetCtrl0,
         0x7c8: 'SideDetectFrameSynchPeak1Pos',
@@ -256,12 +266,17 @@ class Hla(HighLevelAnalyzer):
         0x79a: SideDetCtrl3,
         0x802: 'txAddrPtr',
         0x803: 'rxAddrPtr',
-        0x889: 'SdCfg0',
-        0x8ac: 'AgcSensiAdj',
+        0x819: 'RngBaseAddress',
+        0x889: 'TxModulation',
+        0x8ac: 'RxGain',
         0x8d8: TxClampConfig,
-        0x8e7: 'paImax',
+        0x8e2: 'AnaLna',
+        0x8e5: 'AnaMixer',
+        0x8e7: 'Ocp',
+        0x902: 'RtcCtrl',
         0x911: 'XTAtrim',
         0x912: 'XTBtrim',
+        0x944: 'EvtClr',
     }
 
     lora_bws = {
@@ -359,6 +374,23 @@ class Hla(HighLevelAnalyzer):
             else:
                 ldroStr = hex(ldro)
             my_str = my_str + ' LDRO ' + ldroStr
+        elif self.pt == PacketType.BPSK:
+            br = int.from_bytes(bytearray(self.ba_mosi[1:4]), 'big')
+            bps = 32 * 32000000 / br
+            my_str = str(bps) + 'bps '
+            pulseShape = self.ba_mosi[4]
+            if pulseShape == 0:
+                my_str = my_str + 'noFilter'
+            elif pulseShape == 8:
+                my_str = my_str + 'BT 0.3'
+            elif pulseShape == 9:
+                my_str = my_str + 'BT 0.5'
+            elif pulseShape == 0x0a:
+                my_str = my_str + 'BT 0.7'
+            elif pulseShape == 0x0b:
+                my_str = my_str + 'BT 1.0'
+            else:
+                my_str = my_str + hex(pulseShape)
         else:
             my_str = 'TODO pktType ' + str(self.pt)
 
@@ -372,6 +404,8 @@ class Hla(HighLevelAnalyzer):
                 self.pt = PacketType.LORA
             elif _len == 10:
                 self.pt = PacketType.FSK
+            elif _len == 2:
+                self.pt = PacketType.BPSK
 
         if self.pt == PacketType.FSK:
             preambleLength = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
@@ -428,6 +462,15 @@ class Hla(HighLevelAnalyzer):
             else:
                 crc = hex(crcType)
             my_str = my_str + ' CRC ' + str(crc)
+            dcFree = self.ba_mosi[9]
+            if dcFree == 0:
+                my_str = my_str + ' dcFree_OFF'
+            elif dcFree == 1:
+                my_str = my_str + ' dcFree_WHITENING'
+            elif dcFree == 2:
+                my_str = my_str + ' dcFree_MANCHESTER'
+            else:
+                my_str = my_str + ' dcFree_' + hex(dcFree)
         elif self.pt == PacketType.LORA:
             preambleLength = int.from_bytes(bytearray(self.ba_mosi[1:3]), 'big')
             my_str = 'preamble ' + str(preambleLength)
@@ -443,9 +486,9 @@ class Hla(HighLevelAnalyzer):
             my_str = my_str + ' payLen' + str(payLen)
             crcOn = self.ba_mosi[5]
             if crcOn == 0:
-                crcStr = 'ON'
-            elif crcOn == 1:
                 crcStr = 'OFF'
+            elif crcOn == 1:
+                crcStr = 'ON'
             else:
                 crcStr = hex(crcOn)
             my_str = my_str + ' CRC_' + crcStr
@@ -457,6 +500,9 @@ class Hla(HighLevelAnalyzer):
             else:
                 iqStr = hex(iqInv)
             my_str = my_str + ' IQ ' + iqStr
+        elif self.pt == PacketType.BPSK:
+            payLen = self.ba_mosi[1]
+            my_str = 'payLen ' + str(payLen) + 'bytes (note: ramp_up/down_delay and pld_len_in_bits written to reg 0x00F0)'
         else:
             my_str = 'TODO pktType ' + str(self.pt) + ', mosi length ' + str(len(self.ba_mosi))
 
@@ -464,7 +510,12 @@ class Hla(HighLevelAnalyzer):
 
     def SetRfFrequency(self):
         frf = int.from_bytes(bytearray(self.ba_mosi[1:5]), 'big')
-        return 'SetRfFrequency ' + str(frf)
+        # Convert from PLL steps to Hz using sx126x_convert_freq_in_hz_to_pll_step() inverse
+        # SX126X_XTAL_FREQ = 32000000, SX126X_PLL_STEP_SHIFT_AMOUNT = 14
+        # SX126X_PLL_STEP_SCALED = 32000000 >> (25 - 14) = 32000000 >> 11 = 15625
+        freq_hz = (frf * 15625) >> 14
+        freq_mhz = freq_hz / 1000000.0
+        return 'SetRfFrequency ' + str(frf) + ' (%.3fMHz)' % freq_mhz
 
     def SetCadParams(self):
         cadSymbolNum = self.ba_mosi[1]
@@ -648,13 +699,14 @@ class Hla(HighLevelAnalyzer):
         elif timeout == 0:
             _str = 'single'
         else:
-            us = (timeout * 1000) / 64
-            _str = str(us) + 'μs'
+            ms = timeout * 1000 / 64
+            _str = str(ms) + 'ms'
         return 'SetRx ' + _str
 
     def SetTx(self):
         timeout = int.from_bytes(bytearray(self.ba_mosi[1:4]), 'big')
-        return 'SetTx ' + str(timeout/64)+ 'ms'
+        ms = timeout * 1000 / 64
+        return 'SetTx ' + str(ms) + 'ms'
 
     def SetSleep(self):
         cfg = SleepConfig()
@@ -779,7 +831,7 @@ class Hla(HighLevelAnalyzer):
         return "GetDeviceErrors status=" + hex(self.ba_miso[1]) + "OpError=" + hex(self.ba_miso[2] + (self.ba_miso[3] << 8))
 
     def SetRxDutyCycle(self):
-        return "SetRxDutyCycle rxPeriod=" + str((self.ba_mosi[1] << 16) + (self.ba_mosi[2] << 8) + self.ba_mosi[3]) + "sleepPeriod=" \
+        return "SetRxDutyCycle rxPeriod=" + str((self.ba_mosi[1] << 16) + (self.ba_mosi[2] << 8) + self.ba_mosi[3]) + " sleepPeriod=" \
             + str((self.ba_mosi[4] << 16) + (self.ba_mosi[5] << 8) + self.ba_mosi[6])
 
     def SetDIO3AsTcxoCtrl(self):
@@ -793,7 +845,7 @@ class Hla(HighLevelAnalyzer):
             0x06: "3.0V",
             0x07: "3.3V",
         }
-        return "SetDIO3AsTcxoCtrl tcxoVoltage=" + tcxoV[self.ba_mosi[1]] + "V delay=" \
+        return "SetDIO3AsTcxoCtrl tcxoVoltage=" + tcxoV[self.ba_mosi[1]] + " delay=" \
             + str((self.ba_mosi[2] << 16) + (self.ba_mosi[3] << 8) + self.ba_mosi[4])
 
     def SetFs(self):
