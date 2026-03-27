@@ -699,13 +699,13 @@ class Hla(HighLevelAnalyzer):
         elif timeout == 0:
             _str = 'single'
         else:
-            ms = timeout * 1000 / 64
+            ms = timeout / 64
             _str = str(ms) + 'ms'
         return 'SetRx ' + _str
 
     def SetTx(self):
         timeout = int.from_bytes(bytearray(self.ba_mosi[1:4]), 'big')
-        ms = timeout * 1000 / 64
+        ms = timeout / 64
         return 'SetTx ' + str(ms) + 'ms'
 
     def SetSleep(self):
@@ -972,7 +972,7 @@ class Hla(HighLevelAnalyzer):
             self.idx = 0
         elif frame.type == 'disable':   # rising edge of nSS
             self.idx = -1
-            if len(self.ba_mosi) > 1:
+            if len(self.ba_mosi) > 0:
                 if self.ba_mosi[0] == 0x00:
                     print("0x00 cmd len " + str(len(self.ba_mosi)))
                 try:
@@ -987,7 +987,7 @@ class Hla(HighLevelAnalyzer):
                     my_str = my_str + ' ' + self.parseStatus(self.ba_miso[1])
                 return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':my_str})
             else:
-                return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':'wake'})
+                return AnalyzerFrame('match', self.nss_fall_time, frame.end_time, {'string':'Wake'})
         elif frame.type == 'error':
             print('error');
 
